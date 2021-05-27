@@ -7,7 +7,6 @@ from Business.RAM import RAM
 from Business.Disk import Disk
 from psycopg2 import sql
 
-
 def createTables():
     conn = None
     try:
@@ -136,8 +135,31 @@ def dropTables():
 
 
 def addQuery(query: Query) -> ReturnValue:
-    return ReturnValue.OK
-
+    conn = None
+    ret = ReturnValue.OK
+    try:
+        conn = Connector.DBConnector()
+        query = sql.SQL("INSERT INTO Queries VALUES ("
+                        "{queryID}, "
+                        "{purpose}, "
+                        "{size})").format(queryID=sql.Literal(query.getQueryID()), \
+                                          purpose=sql.Literal(query.getPurpose()), \
+                                          size=sql.Literal(query.getSize()))
+        conn.execute(query)
+        conn.commit()
+    except DatabaseException.ConnectionInvalid as e:
+        ret = ReturnValue.ERROR
+    except DatabaseException.NOT_NULL_VIOLATION as e:
+        ret = ReturnValue.BAD_PARAMS
+    except DatabaseException.CHECK_VIOLATION as e:
+        ret = ReturnValue.BAD_PARAMS
+    except DatabaseException.UNIQUE_VIOLATION as e:
+        ret = ReturnValue.ALREADY_EXISTS
+    except Exception as e:
+        ret = ReturnValue.ERROR
+    finally:
+        conn.close()
+        return ret
 
 def getQueryProfile(queryID: int) -> Query:
     return Query()
@@ -230,6 +252,16 @@ def getCloseQueries(queryID: int) -> List[int]:
 if __name__ == '__main__':
     print("Creating all tables")
     createTables()
+    if addQuery(Query(-1, "something", 2)) != ReturnValue.BAD_PARAMS:
+        print("Negative id error")
+    if addQuery(Query(1, "something", -2)) != ReturnValue.BAD_PARAMS:
+        print("Negative size error")
+    if addQuery(Query(1, None, 2)) != ReturnValue.BAD_PARAMS:
+        print("null values error")
+    if addQuery(Query(1, "something", 2)) != ReturnValue.OK:
+        print("good query error")
+    if addQuery(Query(1, "something else", 5)) != ReturnValue.ALREADY_EXISTS:
+        print("duplicate query error")
     print("Clearing all tables")
     clearTables()
     print("Dropping all tables - empty database")
