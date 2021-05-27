@@ -2,10 +2,16 @@ from typing import List
 import Utility.DBConnector as Connector
 from Utility.ReturnValue import ReturnValue
 from Utility.Exceptions import DatabaseException
+from Utility.DBConnector import ResultSet
 from Business.Query import Query
 from Business.RAM import RAM
 from Business.Disk import Disk
 from psycopg2 import sql
+
+def buildQuery(result: ResultSet, rows_effected: int) -> Query:
+    if rows_effected != 1:
+        raise Execption()
+    return Query(result[0]['queryId'], result[0]['purpose'], result[0]['size'])
 
 def createTables():
     conn = None
@@ -162,7 +168,19 @@ def addQuery(query: Query) -> ReturnValue:
         return ret
 
 def getQueryProfile(queryID: int) -> Query:
-    return Query()
+    conn = None
+    rows_effected, result = 0, ResultSet()
+    try:
+        conn = Connector.DBConnector()
+        query = sql.SQL("SELECT * FROM Queries WHERE queryID = {ID}".format(ID=queryID))
+        rows_effected, result = conn.execute(query)
+        ret = buildQuery(result, rows_effected)
+        conn.commit()
+    except Exception as e:
+        ret = Query.badQuery()
+    finally:
+        conn.close()
+        return ret
 
 
 def deleteQuery(query: Query) -> ReturnValue:
@@ -259,10 +277,16 @@ if __name__ == '__main__':
     if addQuery(Query(1, None, 2)) != ReturnValue.BAD_PARAMS:
         print("null values error")
     if addQuery(Query(1, "something", 2)) != ReturnValue.OK:
-        print("good query error")
+        print("add good query error")
     if addQuery(Query(1, "something else", 5)) != ReturnValue.ALREADY_EXISTS:
         print("duplicate query error")
+    if getQueryProfile(1).getPurpose() != "something":
+        print("get good query error")
+    if getQueryProfile(0).getQueryID() != None:
+        print("get non existent query error")
     print("Clearing all tables")
     clearTables()
+    if getQueryProfile(1).getQueryID() != None:
+        print("clear tables error")
     print("Dropping all tables - empty database")
     dropTables()
