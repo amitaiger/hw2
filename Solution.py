@@ -184,7 +184,21 @@ def getQueryProfile(queryID: int) -> Query:
 
 
 def deleteQuery(query: Query) -> ReturnValue:
-    return ReturnValue.OK
+    conn = None
+    ret = ReturnValue.OK
+    try:
+        conn = Connector.DBConnector()
+        query = sql.SQL("DELETE FROM Queries WHERE queryID = {ID}").format(ID=sql.Literal(query.getQueryID()))
+        conn.execute(query)
+        conn.commit()
+    except DatabaseException.ConnectionInvalid as e:
+        ret = ReturnValue.ERROR
+    except Exception as e:
+        print(e)
+        ret = ReturnValue.ERROR
+    finally:
+        conn.close()
+        return ret
 
 
 def addDisk(disk: Disk) -> ReturnValue:
@@ -283,6 +297,16 @@ if __name__ == '__main__':
     if getQueryProfile(1).getPurpose() != "something":
         print("get good query error")
     if getQueryProfile(0).getQueryID() != None:
+        print("get non existent query error")
+    if deleteQuery(Query(15, "something else", 5)) != ReturnValue.OK:
+        print("delete query error")
+    if addQuery(Query(2, "something else", 5)) != ReturnValue.OK:
+        print("add good query error")
+    if getQueryProfile(2).getPurpose() != "something else":
+        print("get good query error")
+    if deleteQuery(Query(2, "something else", 5)) != ReturnValue.OK:
+        print("delete query error")
+    if getQueryProfile(2).getQueryID() != None:
         print("get non existent query error")
     print("Clearing all tables")
     clearTables()
