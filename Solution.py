@@ -11,7 +11,17 @@ from psycopg2 import sql
 def buildQuery(result: ResultSet, rows_effected: int) -> Query:
     if rows_effected != 1:
         raise Execption()
-    return Query(result[0]['queryId'], result[0]['purpose'], result[0]['size'])
+    return Query(result[0]['queryID'], result[0]['purpose'], result[0]['size'])
+
+def buildDisk(result: ResultSet, rows_effected: int) -> Disk:
+    if rows_effected != 1:
+        raise Execption()
+    return Disk(result[0]['diskID'], result[0]['company'], result[0]['speed'], result[0]['free_space'], result[0]['cost'])
+
+def buildRAM(result: ResultSet, rows_effected: int) -> RAM:
+    if rows_effected != 1:
+        raise Execption()
+    return RAM(result[0]['ramID'], result[0]['company'], result[0]['size'])
 
 def createTables():
     conn = None
@@ -182,7 +192,7 @@ def getQueryProfile(queryID: int) -> Query:
         conn.close()
         return ret
 
-
+#TODO: Adjust free space on disk when deleting query. DOES NOT YET DO THIS
 def deleteQuery(query: Query) -> ReturnValue:
     conn = None
     ret = ReturnValue.OK
@@ -194,7 +204,6 @@ def deleteQuery(query: Query) -> ReturnValue:
     except DatabaseException.ConnectionInvalid as e:
         ret = ReturnValue.ERROR
     except Exception as e:
-        print(e)
         ret = ReturnValue.ERROR
     finally:
         conn.close()
@@ -202,31 +211,164 @@ def deleteQuery(query: Query) -> ReturnValue:
 
 
 def addDisk(disk: Disk) -> ReturnValue:
-    return ReturnValue.OK
+    conn = None
+    ret = ReturnValue.OK
+    try:
+        conn = Connector.DBConnector()
+        query = sql.SQL("INSERT INTO Disks VALUES ("
+                        "{diskID}, "
+                        "{company}, "
+                        "{speed}, "
+                        "{free_space}, "
+                        "{cost})").format(diskID=sql.Literal(disk.getDiskID()), \
+                                          company=sql.Literal(disk.getCompany()), \
+                                          speed=sql.Literal(disk.getSpeed()), \
+                                          free_space=sql.Literal(disk.getFreeSpace()), \
+                                          cost=sql.Literal(disk.getCost()))
+        conn.execute(query)
+        conn.commit()
+    except DatabaseException.ConnectionInvalid as e:
+        ret = ReturnValue.ERROR
+    except DatabaseException.NOT_NULL_VIOLATION as e:
+        ret = ReturnValue.BAD_PARAMS
+    except DatabaseException.CHECK_VIOLATION as e:
+        ret = ReturnValue.BAD_PARAMS
+    except DatabaseException.UNIQUE_VIOLATION as e:
+        ret = ReturnValue.ALREADY_EXISTS
+    except Exception as e:
+        ret = ReturnValue.ERROR
+    finally:
+        conn.close()
+        return ret
 
 
 def getDiskProfile(diskID: int) -> Disk:
-    return Disk()
+    conn = None
+    rows_effected, result = 0, ResultSet()
+    try:
+        conn = Connector.DBConnector()
+        query = sql.SQL("SELECT * FROM Disks WHERE diskID = {ID}".format(ID=diskID))
+        rows_effected, result = conn.execute(query)
+        ret = buildDisk(result, rows_effected)
+        conn.commit()
+    except Exception as e:
+        ret = Disk.badDisk()
+    finally:
+        conn.close()
+        return ret
 
 
 def deleteDisk(diskID: int) -> ReturnValue:
-    return ReturnValue.OK
+    conn = None
+    ret = ReturnValue.OK
+    try:
+        conn = Connector.DBConnector()
+        query = sql.SQL("DELETE FROM Disks WHERE diskID = {ID}").format(ID=sql.Literal(diskID))
+        conn.execute(query)
+        conn.commit()
+    except DatabaseException.ConnectionInvalid as e:
+        ret = ReturnValue.ERROR
+    except Exception as e:
+        ret = ReturnValue.ERROR
+    finally:
+        conn.close()
+        return ret
 
 
 def addRAM(ram: RAM) -> ReturnValue:
-    return ReturnValue.OK
+    conn = None
+    ret = ReturnValue.OK
+    try:
+        conn = Connector.DBConnector()
+        query = sql.SQL("INSERT INTO RAMs VALUES ("
+                        "{ramID}, "
+                        "{size}, "
+                        "{company})").format(ramID=sql.Literal(ram.getRamID()), \
+                                          size=sql.Literal(ram.getSize()), \
+                                          company=sql.Literal(ram.getCompany()))
+        conn.execute(query)
+        conn.commit()
+    except DatabaseException.ConnectionInvalid as e:
+        ret = ReturnValue.ERROR
+    except DatabaseException.NOT_NULL_VIOLATION as e:
+        ret = ReturnValue.BAD_PARAMS
+    except DatabaseException.CHECK_VIOLATION as e:
+        ret = ReturnValue.BAD_PARAMS
+    except DatabaseException.UNIQUE_VIOLATION as e:
+        ret = ReturnValue.ALREADY_EXISTS
+    except Exception as e:
+        ret = ReturnValue.ERROR
+    finally:
+        conn.close()
+        return ret
 
 
 def getRAMProfile(ramID: int) -> RAM:
-    return RAM()
-
+    conn = None
+    rows_effected, result = 0, ResultSet()
+    try:
+        conn = Connector.DBConnector()
+        query = sql.SQL("SELECT * FROM RAMs WHERE ramID = {ID}".format(ID=ramID))
+        rows_effected, result = conn.execute(query)
+        ret = buildRAM(result, rows_effected)
+        conn.commit()
+    except Exception as e:
+        ret = RAM.badRAM()
+    finally:
+        conn.close()
+        return ret
 
 def deleteRAM(ramID: int) -> ReturnValue:
-    return ReturnValue.OK
+    conn = None
+    ret = ReturnValue.OK
+    try:
+        conn = Connector.DBConnector()
+        query = sql.SQL("DELETE FROM RAMs WHERE ramID = {ID}").format(ID=sql.Literal(ramID))
+        conn.execute(query)
+        conn.commit()
+    except DatabaseException.ConnectionInvalid as e:
+        ret = ReturnValue.ERROR
+    except Exception as e:
+        ret = ReturnValue.ERROR
+    finally:
+        conn.close()
+        return ret
 
 
 def addDiskAndQuery(disk: Disk, query: Query) -> ReturnValue:
-    return ReturnValue.OK
+    conn = None
+    ret = ReturnValue.OK
+    try:
+        conn = Connector.DBConnector()
+        query = sql.SQL("INSERT INTO Disks VALUES ("
+                        "{diskID}, "
+                        "{company}, "
+                        "{speed}, "
+                        "{free_space}, "
+                        "{cost});"
+                        
+                        "INSERT INTO Queries VALUES ("
+                        "{queryID}, "
+                        "{purpose}, "
+                        "{size})").format(queryID=sql.Literal(query.getQueryID()), \
+                                          purpose=sql.Literal(query.getPurpose()), \
+                                          size=sql.Literal(query.getSize()), \
+                                          diskID=sql.Literal(disk.getDiskID()), \
+                                          company=sql.Literal(disk.getCompany()), \
+                                          speed=sql.Literal(disk.getSpeed()), \
+                                          free_space=sql.Literal(disk.getFreeSpace()), \
+                                          cost=sql.Literal(disk.getCost()))
+        conn.execute(query)
+        conn.commit()
+    except DatabaseException.ConnectionInvalid as e:
+        ret = ReturnValue.ERROR
+    except DatabaseException.UNIQUE_VIOLATION as e:
+        ret = ReturnValue.ALREADY_EXISTS
+    except Exception as e:
+        ret = ReturnValue.ERROR
+    finally:
+        conn.close()
+        return ret
 
 
 def addQueryToDisk(query: Query, diskID: int) -> ReturnValue:
@@ -308,9 +450,61 @@ if __name__ == '__main__':
         print("delete query error")
     if getQueryProfile(2).getQueryID() != None:
         print("get non existent query error")
+    if addDisk(Disk(1, "supreme", 200, 1000, 1)) != ReturnValue.OK:
+        print("add good disk error")
+    if addDisk(Disk(2, "supreme", 0, 1000, 1)) != ReturnValue.BAD_PARAMS:
+        print("add bad disk error")
+    if addDisk(Disk(1, "supreme", 200, 1000, 1)) != ReturnValue.ALREADY_EXISTS:
+        print("duplicate disk error")
+    if getDiskProfile(1).getCompany() != "supreme":
+        print("get good disk error")
+    if getDiskProfile(2).getCompany() != None:
+        print("get non existent disk error")
+    if addDisk(Disk(2, "supreme", 200, 1000, 1)) != ReturnValue.OK:
+        print("add good disk error")
+    if deleteDisk(2) != ReturnValue.OK:
+        print("delete disk error")
+    if deleteDisk(15) != ReturnValue.OK:
+        print("delete disk error")
+    if addRAM(RAM(1, "gucci", 4000)) != ReturnValue.OK:
+        print("add good RAM error")
+    if addRAM(RAM(2, "gucci", -1)) != ReturnValue.BAD_PARAMS:
+        print("add bad RAM error")
+    if addRAM(RAM(1, "gucci", 4000)) != ReturnValue.ALREADY_EXISTS:
+        print("duplicate RAM error")
+    if getRAMProfile(1).getCompany() != "gucci":
+        print("get good RAM error")
+    if getRAMProfile(2).getCompany() != None:
+        print("get nonexistent RAM error")
+    if addRAM(RAM(2, "gucci", 4000)) != ReturnValue.OK:
+        print("add good RAM error")
+    if deleteRAM(2) != ReturnValue.OK:
+        print("delete RAM error")
+    if deleteRAM(15) != ReturnValue.OK:
+        print("delete RAM error")
+    if addDiskAndQuery(Disk(2, "supreme", 200, 1000, 1), Query(2, "something else", 5)) != ReturnValue.OK:
+        print("add good disk and query error")
+    if getDiskProfile(2).getCompany() != "supreme":
+        print("add good disk and query error")
+    if getQueryProfile(2).getPurpose() != "something else":
+        print("add good disk and query error")
+    if addDiskAndQuery(Disk(3, "supreme", 200, 1000, 1), Query(2, "something else", 5)) != ReturnValue.ALREADY_EXISTS:
+        print("add duplicate query with disk error")
+    if getDiskProfile(3).getCompany() != None:
+        print("added disk with duplicate query error")
+    if addDiskAndQuery(Disk(2, "supreme", 200, 1000, 1), Query(3, "something else", 5)) != ReturnValue.ALREADY_EXISTS:
+        print("add duplicate disk with query error")
+    if getQueryProfile(3).getPurpose() != None:
+        print("added query with duplicate disk error")
+    if addDiskAndQuery(Disk(3, "supreme", 200, 1000, 1), Query(3, "something else", 5)) != ReturnValue.OK:
+        print("add good disk and query error")
     print("Clearing all tables")
     clearTables()
     if getQueryProfile(1).getQueryID() != None:
+        print("clear tables error")
+    if getDiskProfile(1).getDiskID() != None:
+        print("clear tables error")
+    if getRAMProfile(1).getRamID() != None:
         print("clear tables error")
     print("Dropping all tables - empty database")
     dropTables()
