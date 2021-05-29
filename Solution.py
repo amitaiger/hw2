@@ -27,7 +27,7 @@ def createTables():
     conn = None
     try:
         conn = Connector.DBConnector()
-        query = sql.SQL(
+        transaction = sql.SQL(
             "CREATE TABLE Queries ("
             "queryID INTEGER, "
             "purpose TEXT NOT NULL, "
@@ -79,8 +79,16 @@ def createTables():
             "FOREIGN KEY (diskID) "
             "REFERENCES Disks(diskID) "
             "ON DELETE CASCADE " 
-            ");")
-        conn.execute(query)
+            "); "
+            
+            "CREATE VIEW QueriesDisksWithSizes AS "
+            "SELECT q.queryID, d.diskID, size, free_space "
+            "FROM Queries q " 
+            "INNER JOIN QueriesDisks qd "
+            "ON q.queryID = qd.queryID "
+            "INNER JOIN Disks d "
+            "ON qd.diskID = d.diskID")
+        conn.execute(transaction)
         conn.commit()
     except DatabaseException.ConnectionInvalid as e:
         print(e)
@@ -102,10 +110,10 @@ def clearTables():
     conn = None
     try:
         conn = Connector.DBConnector()
-        query = sql.SQL("DELETE FROM Queries; "
+        transaction = sql.SQL("DELETE FROM Queries; "
                         "DELETE FROM Disks; "
                         "DELETE FROM RAMs;")
-        conn.execute(query)
+        conn.execute(transaction)
         conn.commit()
     except DatabaseException.ConnectionInvalid as e:
         print(e)
@@ -127,12 +135,12 @@ def dropTables():
     conn = None
     try:
         conn = Connector.DBConnector()
-        query = sql.SQL("DROP TABLE IF EXISTS Queries CASCADE; "
+        transaction = sql.SQL("DROP TABLE IF EXISTS Queries CASCADE; "
                         "DROP TABLE IF EXISTS Disks CASCADE; "
                         "DROP TABLE IF EXISTS RAMs CASCADE; "
                         "DROP TABLE IF EXISTS QueriesDisks CASCADE; "
                         "DROP TABLE IF EXISTS RAMsDisks CASCADE; ")
-        conn.execute(query)
+        conn.execute(transaction)
         conn.commit()
     except DatabaseException.ConnectionInvalid as e:
         print(e)
@@ -155,13 +163,13 @@ def addQuery(query: Query) -> ReturnValue:
     ret = ReturnValue.OK
     try:
         conn = Connector.DBConnector()
-        query = sql.SQL("INSERT INTO Queries VALUES ("
+        transaction = sql.SQL("INSERT INTO Queries VALUES ("
                         "{queryID}, "
                         "{purpose}, "
                         "{size})").format(queryID=sql.Literal(query.getQueryID()), \
                                           purpose=sql.Literal(query.getPurpose()), \
                                           size=sql.Literal(query.getSize()))
-        conn.execute(query)
+        conn.execute(transaction)
         conn.commit()
     except DatabaseException.ConnectionInvalid as e:
         ret = ReturnValue.ERROR
@@ -182,8 +190,8 @@ def getQueryProfile(queryID: int) -> Query:
     rows_effected, result = 0, ResultSet()
     try:
         conn = Connector.DBConnector()
-        query = sql.SQL("SELECT * FROM Queries WHERE queryID = {ID}".format(ID=queryID))
-        rows_effected, result = conn.execute(query)
+        transaction = sql.SQL("SELECT * FROM Queries WHERE queryID = {ID}".format(ID=queryID))
+        rows_effected, result = conn.execute(transaction)
         ret = buildQuery(result, rows_effected)
         conn.commit()
     except Exception as e:
@@ -192,19 +200,26 @@ def getQueryProfile(queryID: int) -> Query:
         conn.close()
         return ret
 
-#TODO: Adjust free space on disk when deleting query. DOES NOT YET DO THIS
 def deleteQuery(query: Query) -> ReturnValue:
     conn = None
     ret = ReturnValue.OK
     try:
         conn = Connector.DBConnector()
-        query = sql.SQL("DELETE FROM Queries WHERE queryID = {ID}").format(ID=sql.Literal(query.getQueryID()))
-        conn.execute(query)
+        transaction = sql.SQL("UPDATE Disks d "
+                              "SET free_space = qdws.free_space + qdws.size "
+                              "FROM QueriesDisksWithSizes qdws "
+                              "WHERE qdws.queryID = {ID} AND qdws.diskID = d.diskID; "
+                              "DELETE FROM Queries WHERE queryID = {ID}")\
+                              .format(ID=sql.Literal(query.getQueryID()))
+        conn.execute(transaction)
         conn.commit()
     except DatabaseException.ConnectionInvalid as e:
         ret = ReturnValue.ERROR
+        conn.rollback()
     except Exception as e:
+        print(e)
         ret = ReturnValue.ERROR
+        conn.rollback()
     finally:
         conn.close()
         return ret
@@ -215,7 +230,7 @@ def addDisk(disk: Disk) -> ReturnValue:
     ret = ReturnValue.OK
     try:
         conn = Connector.DBConnector()
-        query = sql.SQL("INSERT INTO Disks VALUES ("
+        transaction = sql.SQL("INSERT INTO Disks VALUES ("
                         "{diskID}, "
                         "{company}, "
                         "{speed}, "
@@ -225,7 +240,7 @@ def addDisk(disk: Disk) -> ReturnValue:
                                           speed=sql.Literal(disk.getSpeed()), \
                                           free_space=sql.Literal(disk.getFreeSpace()), \
                                           cost=sql.Literal(disk.getCost()))
-        conn.execute(query)
+        conn.execute(transaction)
         conn.commit()
     except DatabaseException.ConnectionInvalid as e:
         ret = ReturnValue.ERROR
@@ -247,8 +262,8 @@ def getDiskProfile(diskID: int) -> Disk:
     rows_effected, result = 0, ResultSet()
     try:
         conn = Connector.DBConnector()
-        query = sql.SQL("SELECT * FROM Disks WHERE diskID = {ID}".format(ID=diskID))
-        rows_effected, result = conn.execute(query)
+        transaction = sql.SQL("SELECT * FROM Disks WHERE diskID = {ID}".format(ID=diskID))
+        rows_effected, result = conn.execute(transaction)
         ret = buildDisk(result, rows_effected)
         conn.commit()
     except Exception as e:
@@ -263,8 +278,8 @@ def deleteDisk(diskID: int) -> ReturnValue:
     ret = ReturnValue.OK
     try:
         conn = Connector.DBConnector()
-        query = sql.SQL("DELETE FROM Disks WHERE diskID = {ID}").format(ID=sql.Literal(diskID))
-        conn.execute(query)
+        transaction = sql.SQL("DELETE FROM Disks WHERE diskID = {ID}").format(ID=sql.Literal(diskID))
+        conn.execute(transaction)
         conn.commit()
     except DatabaseException.ConnectionInvalid as e:
         ret = ReturnValue.ERROR
@@ -280,13 +295,13 @@ def addRAM(ram: RAM) -> ReturnValue:
     ret = ReturnValue.OK
     try:
         conn = Connector.DBConnector()
-        query = sql.SQL("INSERT INTO RAMs VALUES ("
+        transaction = sql.SQL("INSERT INTO RAMs VALUES ("
                         "{ramID}, "
                         "{size}, "
                         "{company})").format(ramID=sql.Literal(ram.getRamID()), \
                                           size=sql.Literal(ram.getSize()), \
                                           company=sql.Literal(ram.getCompany()))
-        conn.execute(query)
+        conn.execute(transaction)
         conn.commit()
     except DatabaseException.ConnectionInvalid as e:
         ret = ReturnValue.ERROR
@@ -308,8 +323,8 @@ def getRAMProfile(ramID: int) -> RAM:
     rows_effected, result = 0, ResultSet()
     try:
         conn = Connector.DBConnector()
-        query = sql.SQL("SELECT * FROM RAMs WHERE ramID = {ID}".format(ID=ramID))
-        rows_effected, result = conn.execute(query)
+        transaction = sql.SQL("SELECT * FROM RAMs WHERE ramID = {ID}".format(ID=ramID))
+        rows_effected, result = conn.execute(transaction)
         ret = buildRAM(result, rows_effected)
         conn.commit()
     except Exception as e:
@@ -323,8 +338,8 @@ def deleteRAM(ramID: int) -> ReturnValue:
     ret = ReturnValue.OK
     try:
         conn = Connector.DBConnector()
-        query = sql.SQL("DELETE FROM RAMs WHERE ramID = {ID}").format(ID=sql.Literal(ramID))
-        conn.execute(query)
+        transaction = sql.SQL("DELETE FROM RAMs WHERE ramID = {ID}").format(ID=sql.Literal(ramID))
+        conn.execute(transaction)
         conn.commit()
     except DatabaseException.ConnectionInvalid as e:
         ret = ReturnValue.ERROR
@@ -340,7 +355,7 @@ def addDiskAndQuery(disk: Disk, query: Query) -> ReturnValue:
     ret = ReturnValue.OK
     try:
         conn = Connector.DBConnector()
-        query = sql.SQL("INSERT INTO Disks VALUES ("
+        transaction = sql.SQL("INSERT INTO Disks VALUES ("
                         "{diskID}, "
                         "{company}, "
                         "{speed}, "
@@ -358,14 +373,17 @@ def addDiskAndQuery(disk: Disk, query: Query) -> ReturnValue:
                                           speed=sql.Literal(disk.getSpeed()), \
                                           free_space=sql.Literal(disk.getFreeSpace()), \
                                           cost=sql.Literal(disk.getCost()))
-        conn.execute(query)
+        conn.execute(transaction)
         conn.commit()
     except DatabaseException.ConnectionInvalid as e:
         ret = ReturnValue.ERROR
+        conn.rollback()
     except DatabaseException.UNIQUE_VIOLATION as e:
         ret = ReturnValue.ALREADY_EXISTS
+        conn.rollback()
     except Exception as e:
         ret = ReturnValue.ERROR
+        conn.rollback()
     finally:
         conn.close()
         return ret
