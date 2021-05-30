@@ -23,6 +23,12 @@ def buildRAM(result: ResultSet, rows_effected: int) -> RAM:
         raise Execption()
     return RAM(result[0]['ramID'], result[0]['company'], result[0]['size'])
 
+def buildAvailableDiskList(result: ResultSet, rows_effected: int) -> List[int]:
+    ret = []
+    for i in range(0, rows_effected):
+        ret.append(result[i]['diskID'])
+    return ret
+
 def createTables():
     conn = None
     try:
@@ -87,7 +93,12 @@ def createTables():
             "INNER JOIN QueriesDisks qd "
             "ON q.queryID = qd.queryID "
             "INNER JOIN Disks d "
-            "ON qd.diskID = d.diskID")
+            "ON qd.diskID = d.diskID; "
+            
+            "CREATE VIEW PossibleQueriesDisks AS "
+            "SELECT q.queryID, d.diskID, d.speed "
+            "FROM Queries q, Disks d "
+            "WHERE q.size <= d.free_space ")
         conn.execute(transaction)
         conn.commit()
     except DatabaseException.ConnectionInvalid as e:
@@ -434,11 +445,28 @@ def getConflictingDisks() -> List[int]:
 
 
 def mostAvailableDisks() -> List[int]:
-    return []
+    conn = None
+    ret = []
+    try:
+        conn = Connector.DBConnector()
+        transaction = sql.SQL("SELECT diskID, COUNT(queryID), speed "
+                              "FROM PossibleQueriesDisks "
+                              "GROUP BY diskID, speed "
+                              "ORDER BY COUNT(queryID) DESC, speed DESC, diskID ASC "
+                              "LIMIT 5")
+        rows_effected, result = conn.execute(transaction)
+        ret = buildAvailableDiskList(result, rows_effected)
+        conn.commit()
+    except Exception as e:
+        print(e)
+        ret = []
+    finally:
+        conn.close()
+        return ret
 
 
 def getCloseQueries(queryID: int) -> List[int]:
-    return []
+    return [];    
 
 
 if __name__ == '__main__':
@@ -500,7 +528,7 @@ if __name__ == '__main__':
         print("delete RAM error")
     if deleteRAM(15) != ReturnValue.OK:
         print("delete RAM error")
-    if addDiskAndQuery(Disk(2, "supreme", 200, 1000, 1), Query(2, "something else", 5)) != ReturnValue.OK:
+    if addDiskAndQuery(Disk(2, "supreme", 400, 1000, 1), Query(2, "something else", 5)) != ReturnValue.OK:
         print("add good disk and query error")
     if getDiskProfile(2).getCompany() != "supreme":
         print("add good disk and query error")
@@ -514,10 +542,20 @@ if __name__ == '__main__':
         print("add duplicate disk with query error")
     if getQueryProfile(3).getPurpose() != None:
         print("added query with duplicate disk error")
-    if addDiskAndQuery(Disk(3, "supreme", 200, 1000, 1), Query(3, "something else", 5)) != ReturnValue.OK:
+    if addDiskAndQuery(Disk(3, "supreme", 200, 2000, 1), Query(3, "something else", 2000)) != ReturnValue.OK:
         print("add good disk and query error")
+    if addDisk(Disk(4, "supreme", 200, 1000, 1)) != ReturnValue.OK:
+        print("add good disk error")
+    if addDisk(Disk(6, "supreme", 200, 1000, 1)) != ReturnValue.OK:
+        print("add good disk error")
+    if addDisk(Disk(5, "supreme", 200, 1000, 1)) != ReturnValue.OK:
+        print("add good disk error")
+    if addDisk(Disk(7, "supreme", 200, 1000, 1)) != ReturnValue.OK:
+        print("add good disk error")
+    print(mostAvailableDisks())
     print("Clearing all tables")
     clearTables()
+    print(mostAvailableDisks())
     if getQueryProfile(1).getQueryID() != None:
         print("clear tables error")
     if getDiskProfile(1).getDiskID() != None:
