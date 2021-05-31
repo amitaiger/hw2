@@ -88,7 +88,7 @@ def createTables():
             "); "
             
             "CREATE VIEW QueriesDisksWithSizes AS "
-            "SELECT q.queryID, d.diskID, size, free_space "
+            "SELECT q.queryID, d.diskID, q.size, d.free_space "
             "FROM Queries q " 
             "INNER JOIN QueriesDisks qd "
             "ON q.queryID = qd.queryID "
@@ -98,7 +98,14 @@ def createTables():
             "CREATE VIEW PossibleQueriesDisks AS "
             "SELECT q.queryID, d.diskID, d.speed "
             "FROM Queries q, Disks d "
-            "WHERE q.size <= d.free_space ")
+            "WHERE q.size <= d.free_space; "
+            
+            "CREATE VIEW DisksRAMSum as "
+            "SELECT diskID, SUM(R.size) AS ramSum "
+            "FROM RAMs R, RAMsDisks RD "
+            "WHERE R.ramID = RD.ramID "
+            "GROUP BY rd.diskID;"
+        )
         conn.execute(transaction)
         conn.commit()
     except DatabaseException.ConnectionInvalid as e:
@@ -228,7 +235,6 @@ def deleteQuery(query: Query) -> ReturnValue:
         ret = ReturnValue.ERROR
         conn.rollback()
     except Exception as e:
-        print(e)
         ret = ReturnValue.ERROR
         conn.rollback()
     finally:
@@ -290,7 +296,9 @@ def deleteDisk(diskID: int) -> ReturnValue:
     try:
         conn = Connector.DBConnector()
         transaction = sql.SQL("DELETE FROM Disks WHERE diskID = {ID}").format(ID=sql.Literal(diskID))
-        conn.execute(transaction)
+        rows_effected, result = conn.execute(transaction)
+        if rows_effected == 0:
+            ret = ReturnValue.NOT_EXISTS
         conn.commit()
     except DatabaseException.ConnectionInvalid as e:
         ret = ReturnValue.ERROR
@@ -350,7 +358,9 @@ def deleteRAM(ramID: int) -> ReturnValue:
     try:
         conn = Connector.DBConnector()
         transaction = sql.SQL("DELETE FROM RAMs WHERE ramID = {ID}").format(ID=sql.Literal(ramID))
-        conn.execute(transaction)
+        rows_effected, result = conn.execute(transaction)
+        if rows_effected == 0:
+            ret = ReturnValue.NOT_EXISTS
         conn.commit()
     except DatabaseException.ConnectionInvalid as e:
         ret = ReturnValue.ERROR
@@ -401,7 +411,35 @@ def addDiskAndQuery(disk: Disk, query: Query) -> ReturnValue:
 
 
 def addQueryToDisk(query: Query, diskID: int) -> ReturnValue:
-    return ReturnValue.OK
+    conn = None
+    ret = ReturnValue.OK
+    try:
+        conn = Connector.DBConnector()
+        query = sql.SQL("INSERT INTO QueriesDisks(queryID, diskID) VALUES ("
+                        "{queryID}, "
+                        "{diskID});"
+                        "UPDATE Disks "
+                        "SET free_space=free_space-{size} "
+                        "WHERE diskID={diskID}").format(queryID=sql.Literal(query.getQueryID()),
+                                                        diskID=sql.Literal(diskID),
+                                                        size=sql.Literal(query.getSize()))
+        # TODO check if table checks free space existence
+        conn.execute(query)
+        conn.commit()
+    # TODO add NOT_EXISTS exception
+    except DatabaseException.ConnectionInvalid as e:
+        ret = ReturnValue.ERROR
+    except DatabaseException.NOT_NULL_VIOLATION as e:
+        ret = ReturnValue.BAD_PARAMS
+    except DatabaseException.CHECK_VIOLATION as e:
+        ret = ReturnValue.BAD_PARAMS
+    except DatabaseException.UNIQUE_VIOLATION as e:
+        ret = ReturnValue.ALREADY_EXISTS
+    except Exception as e:
+        ret = ReturnValue.ERROR
+    finally:
+        conn.close()
+        return ret
 
 
 def removeQueryFromDisk(query: Query, diskID: int) -> ReturnValue:
@@ -417,7 +455,27 @@ def removeRAMFromDisk(ramID: int, diskID: int) -> ReturnValue:
 
 
 def averageSizeQueriesOnDisk(diskID: int) -> float:
-    return 0
+    conn = None
+    rows_effected, result = 0, ResultSet()
+    ret = -1
+    try:
+        conn = Connector.DBConnector()
+        query = sql.SQL("SELECT AVG(Q.size) "
+                        "FROM Queries Q, (SELECT queryID "
+                        "FROM QueriesDisks "
+                        "WHERE diskID={diskID}) AS QD "
+                        "WHERE Q.queryID = QD.queryID").format(diskID=sql.Literal(diskID))
+        rows_effected, result = conn.execute(query)
+        ret = result[0]['avg']
+        conn.commit()
+        # TODO add exception: 0 in case of division by 0 or ID does not exist, -1 in case of other error.
+    except DatabaseException.UNIQUE_VIOLATION as e:
+        ret = 0
+    except Exception as e:
+        ret = -1
+    finally:
+        conn.close()
+        return ret
 
 
 def diskTotalRAM(diskID: int) -> int:
@@ -510,7 +568,7 @@ if __name__ == '__main__':
         print("add good disk error")
     if deleteDisk(2) != ReturnValue.OK:
         print("delete disk error")
-    if deleteDisk(15) != ReturnValue.OK:
+    if deleteDisk(15) != ReturnValue.NOT_EXISTS:
         print("delete disk error")
     if addRAM(RAM(1, "gucci", 4000)) != ReturnValue.OK:
         print("add good RAM error")
@@ -526,7 +584,7 @@ if __name__ == '__main__':
         print("add good RAM error")
     if deleteRAM(2) != ReturnValue.OK:
         print("delete RAM error")
-    if deleteRAM(15) != ReturnValue.OK:
+    if deleteRAM(15) != ReturnValue.NOT_EXISTS:
         print("delete RAM error")
     if addDiskAndQuery(Disk(2, "supreme", 400, 1000, 1), Query(2, "something else", 5)) != ReturnValue.OK:
         print("add good disk and query error")
@@ -552,6 +610,22 @@ if __name__ == '__main__':
         print("add good disk error")
     if addDisk(Disk(7, "supreme", 200, 1000, 1)) != ReturnValue.OK:
         print("add good disk error")
+    if addQueryToDisk(Query(1, "something", 2), 7) != ReturnValue.OK:
+        print("add query to disk error")
+    if addQueryToDisk(Query(1, "something", 2), 6) != ReturnValue.OK:
+        print("add query to disk error")
+    if averageSizeQueriesOnDisk(7) != 2:
+        print("average size queries error")
+    if getDiskProfile(7).getFreeSpace() != 998:
+        print("add query to disk error")
+    if deleteQuery(Query(1, "something", 2)) != ReturnValue.OK:
+        print("delete query error")
+    if getDiskProfile(7).getFreeSpace() != 1000:
+        print("delete query error")
+    if getDiskProfile(6).getFreeSpace() != 1000:
+        print("delete query error")
+    if averageSizeQueriesOnDisk(7) == 2:
+        print("delete query error")
     print(mostAvailableDisks())
     print("Clearing all tables")
     clearTables()
