@@ -29,6 +29,12 @@ def buildAvailableDiskList(result: ResultSet, rows_effected: int) -> List[int]:
         ret.append(result[i]['diskID'])
     return ret
 
+def buildCloseQueriesList(result: ResultSet, rows_effected: int) -> List[int]:
+    ret = []
+    for i in range(0, rows_effected):
+        ret.append(result[i]['queryID'])
+    return ret
+
 def createTables():
     conn = None
     try:
@@ -443,7 +449,34 @@ def addQueryToDisk(query: Query, diskID: int) -> ReturnValue:
 
 
 def removeQueryFromDisk(query: Query, diskID: int) -> ReturnValue:
-    return ReturnValue.OK
+    conn = None
+    ret = ReturnValue.OK
+    try:
+        conn = Connector.DBConnector()
+        query = sql.SQL("DELETE FROM QueriesDisks "
+                        "WHERE diskID={diskID} AND queryID={queryID}; "
+                        "UPDATE Disks "
+                        "SET free_space=free_space+{size} "
+                        "WHERE diskID={diskID}").format(queryID=sql.Literal(query.getQueryID()),
+                                                        size = sql.Literal(query.getSize()),
+                                                        diskID=sql.Literal(diskID))
+        # TODO check if table checks free space existence
+        conn.execute(query)
+        conn.commit()
+    # TODO add NOT_EXISTS exception
+    except DatabaseException.ConnectionInvalid as e:
+        ret = ReturnValue.ERROR
+    except DatabaseException.NOT_NULL_VIOLATION as e:
+        ret = ReturnValue.BAD_PARAMS
+    except DatabaseException.CHECK_VIOLATION as e:
+        ret = ReturnValue.BAD_PARAMS
+    except DatabaseException.UNIQUE_VIOLATION as e:
+        ret = ReturnValue.ALREADY_EXISTS
+    except Exception as e:
+        ret = ReturnValue.ERROR
+    finally:
+        conn.close()
+        return ret
 
 
 def addRAMToDisk(ramID: int, diskID: int) -> ReturnValue:
@@ -507,16 +540,18 @@ def mostAvailableDisks() -> List[int]:
     ret = []
     try:
         conn = Connector.DBConnector()
-        transaction = sql.SQL("SELECT diskID, COUNT(queryID), speed "
-                              "FROM PossibleQueriesDisks "
-                              "GROUP BY diskID, speed "
-                              "ORDER BY COUNT(queryID) DESC, speed DESC, diskID ASC "
+        transaction = sql.SQL("SELECT d.diskID, COALESCE(nonzero_query_count, 0) AS query_count, speed "
+                              "FROM Disks d FULL JOIN (" #accounting for disks that can't run any queries
+                                "SELECT diskID, COUNT(queryID) AS nonzero_query_count "
+                                "FROM PossibleQueriesDisks "
+                                "GROUP BY diskID ) pqd " #number of possible queries that can run on disk
+                              "ON d.diskID = pqd.diskID "
+                              "ORDER BY query_count DESC, speed DESC, diskID ASC "
                               "LIMIT 5")
         rows_effected, result = conn.execute(transaction)
         ret = buildAvailableDiskList(result, rows_effected)
         conn.commit()
     except Exception as e:
-        print(e)
         ret = []
     finally:
         conn.close()
@@ -524,7 +559,37 @@ def mostAvailableDisks() -> List[int]:
 
 
 def getCloseQueries(queryID: int) -> List[int]:
-    return [];    
+    conn = None
+    ret = []
+    try:
+        conn = Connector.DBConnector()
+        transaction = sql.SQL("SELECT queryID "
+                              "FROM ("
+                                "SELECT q1.queryID, COALESCE(nonzero_same_count, 0) as same_count "
+                                "FROM Queries q1 FULL JOIN (" #accounting for cases where a query isn't running on any disks
+                                    "SELECT d1.queryID, COUNT(d1.diskID) AS nonzero_same_count "
+                                    "FROM QueriesDisks d1, QueriesDisks d2 "
+                                    "WHERE d1.queryID <> {ID} AND d1.diskID = d2.diskID AND d2.queryID = {ID}"
+                                    "GROUP BY d1.queryID"
+                                    ") q2 " #table that counts how many of the same disks as selected query each query is running on
+                                "ON q1.queryID = q2.queryID "
+                                "WHERE q1.queryID <> {ID}"
+                                ") q3 " 
+                              "WHERE same_count*2 >= ("
+                              "SELECT COALESCE(COUNT(diskID), 0) as total_count "
+                              "FROM QueriesDisks "
+                              "WHERE queryID = {ID}) " #total disks selected is running on
+                              "ORDER BY queryID ASC "
+                              "LIMIT 10").format(ID=sql.Literal(queryID))
+        rows_effected, result = conn.execute(transaction)
+        ret = buildCloseQueriesList(result, rows_effected)
+        conn.commit()
+    except Exception as e:
+        print(e)
+        ret = []
+    finally:
+        conn.close()
+        return ret  
 
 
 if __name__ == '__main__':
